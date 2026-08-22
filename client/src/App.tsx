@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import LinkButton from "./LinkButton";
-import type { AccountGroup } from "./types";
+import type { AccountGroup, LinkedItem } from "./types";
 
 const INSTITUTIONS = ["Chase", "Bank of America", "SoFi", "Fidelity"];
 
@@ -13,6 +13,7 @@ export default function App() {
   const [groups, setGroups] = useState<AccountGroup[]>([]);
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [linkedInstitutions, setLinkedInstitutions] = useState<Set<string>>(new Set());
 
   const fetchAccounts = useCallback(async () => {
     setLoading(true);
@@ -28,9 +29,26 @@ export default function App() {
     }
   }, []);
 
+  const fetchItems = useCallback(async () => {
+    try {
+      const res = await fetch("/api/items");
+      const data = await res.json();
+      const items: LinkedItem[] = data.items ?? [];
+      setLinkedInstitutions(new Set(items.map((item) => item.institution_name)));
+    } catch (err) {
+      console.error("Failed to fetch items", err);
+    }
+  }, []);
+
+  const refreshAll = useCallback(() => {
+    fetchAccounts();
+    fetchItems();
+  }, [fetchAccounts, fetchItems]);
+
   useEffect(() => {
     fetchAccounts();
-  }, [fetchAccounts]);
+    fetchItems();
+  }, [fetchAccounts, fetchItems]);
 
   const netWorth = groups.reduce((total, group) => {
     const groupTotal = group.accounts.reduce(
@@ -52,9 +70,14 @@ export default function App() {
 
       <div className="actions">
         {INSTITUTIONS.map((institution) => (
-          <LinkButton key={institution} institutionName={institution} onLinked={fetchAccounts} />
+          <LinkButton
+            key={institution}
+            institutionName={institution}
+            isLinked={linkedInstitutions.has(institution)}
+            onLinked={refreshAll}
+          />
         ))}
-        <button className="refresh-button" onClick={fetchAccounts} disabled={loading}>
+        <button className="refresh-button" onClick={refreshAll} disabled={loading}>
           {loading ? "Refreshing..." : "Refresh"}
         </button>
       </div>

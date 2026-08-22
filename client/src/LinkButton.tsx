@@ -3,10 +3,11 @@ import { usePlaidLink } from "react-plaid-link";
 
 interface LinkButtonProps {
   institutionName: string;
+  isLinked: boolean;
   onLinked: () => void;
 }
 
-export default function LinkButton({ institutionName, onLinked }: LinkButtonProps) {
+export default function LinkButton({ institutionName, isLinked, onLinked }: LinkButtonProps) {
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -52,9 +53,20 @@ export default function LinkButton({ institutionName, onLinked }: LinkButtonProp
     }
   }, [linkToken, ready, open]);
 
+  const label = loading
+    ? "Loading..."
+    : isLinked
+    ? `✓ ${institutionName} Linked`
+    : `Link ${institutionName}`;
+
   return (
-    <button className="link-button" onClick={fetchLinkToken} disabled={loading}>
-      {loading ? "Loading..." : `Link ${institutionName}`}
+    <button
+      className={`link-button${isLinked ? " link-button-linked" : ""}`}
+      onClick={fetchLinkToken}
+      disabled={loading}
+      title={isLinked ? `Click to re-link ${institutionName}` : undefined}
+    >
+      {label}
     </button>
   );
 }

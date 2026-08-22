@@ -89,6 +89,11 @@ body {
   border-color: #24462f;
 }
 
+.link-button.link-button-linked {
+  color: #4ade80;
+  border-color: #24462f;
+}
+
 .last-updated {
   font-size: 0.75rem;
   color: #6b7078;
