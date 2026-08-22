@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.env.local
+
+# Plaid access tokens — never commit
+server/items.json
+
+.DS_Store
+*.log
