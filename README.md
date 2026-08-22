@@ -1,10 +1,20 @@
 # Finance Tracker
 
-A local personal finance dashboard that links your bank accounts via Plaid and
-shows aggregated balances across institutions.
+A local personal finance dashboard that links your bank accounts via Plaid,
+shows aggregated balances across institutions, and breaks down your spending
+by category. Data is cached locally in SQLite and refreshed in the background
+so the UI is instant on every load.
 
 - `server/` — Express + TypeScript API. Holds your Plaid secret; never exposed to the client.
 - `client/` — React + TypeScript (Vite) dashboard UI.
+
+## Features
+
+- **Accounts view** — every linked institution's balances, grouped by bank, with a running net worth total.
+- **Spending view** — donut chart of spending by Plaid personal-finance category (click a slice to drill into detailed subcategories), a top-merchants list, and a searchable/filterable transactions table.
+- **Date-range picker** — 30d / 90d / MTD / YTD / custom.
+- **Filters** — search, per-account chips, per-category dropdown.
+- **Stale-while-revalidate** — first paint is instant from the local cache; fresh data is fetched in the background and swapped in automatically without a manual refresh.
 
 ## Setup
 
@@ -74,26 +84,50 @@ Open http://localhost:5173.
 - Linking an account runs Plaid Link in the browser, which returns a
   `public_token`. The client sends that to the server, which exchanges it
   for a permanent `access_token`.
-- Access tokens are stored locally in `server/items.json` (plaintext,
-  gitignored — never commit this file). There's no real database; it's just
-  a JSON read/write helper, fine for a single-user local tool.
-- The dashboard calls `GET /api/accounts`, which loops over every linked
-  item, fetches balances via `accountsBalanceGet`, and groups the results by
-  institution. Net worth is the sum of all current balances.
+- Access tokens, cached balances, and cached transactions live in a local
+  SQLite database at `server/data/finance.db` (gitignored, plaintext — same
+  trust boundary as `server/items.json`). Legacy tokens in `items.json` are
+  auto-migrated into the DB on first boot; the JSON file is left in place
+  and you can delete it manually after you confirm the migration.
+- **Read path** is a local `SELECT` — `GET /api/accounts` and
+  `GET /api/transactions` never hit Plaid. Responses come back in tens of
+  milliseconds.
+- **Write path** runs in the background. Adding `?refresh=1` (or having no
+  cached data yet) schedules a per-item refresh that calls
+  `accountsBalanceGet` for balances and Plaid's `transactionsSync` for
+  transactions. `transactionsSync` uses a persisted cursor per item, so
+  after the first pull only added/modified/removed deltas come across the
+  wire.
+- The client polls a tiny `GET /api/sync/status` endpoint for ~30s after a
+  refresh trigger; when a `*_fetched_at` timestamp bumps, it re-fetches the
+  affected view and the new data swaps in without a manual refresh.
 
 ## API endpoints
 
 | Method | Path | Description |
 | --- | --- | --- |
 | POST | `/api/create_link_token` | Creates a Plaid Link token (`transactions`, `investments`, US) |
-| POST | `/api/exchange_public_token` | Exchanges a `public_token` for an `access_token` and stores it |
-| GET | `/api/accounts` | Balances for every linked item, grouped by institution |
-| GET | `/api/transactions` | Transactions for every linked item; `?start=YYYY-MM-DD&end=YYYY-MM-DD` (defaults to the last 30 days) |
+| POST | `/api/exchange_public_token` | Exchanges a `public_token` for an `access_token`, stores it, and schedules an initial background sync |
+| GET | `/api/accounts` | Cached balances grouped by institution. Add `?refresh=1` to also schedule a background refresh from Plaid |
+| GET | `/api/transactions` | Cached transactions; `?start=YYYY-MM-DD&end=YYYY-MM-DD` (defaults to the last 30 days). Add `?refresh=1` to schedule a background sync |
+| GET | `/api/sync/status` | Per-item `accounts_fetched_at` / `transactions_fetched_at` timestamps + any last sync error. Client polls this to auto-swap fresh data |
 | GET | `/api/items` | Lists linked institutions (no tokens exposed) |
 
 ## Security notes
 
-- `server/.env` and `server/items.json` are gitignored — don't commit real
-  Plaid secrets or access tokens.
+- `server/.env`, `server/items.json`, and `server/data/` (SQLite + WAL
+  sidecars) are gitignored — don't commit real Plaid secrets, access
+  tokens, or the cache DB.
 - This is designed for local, single-user use. It has no authentication
   layer; don't deploy it as-is to a public server.
+
+## Troubleshooting
+
+- **`better-sqlite3` "invalid ELF header" or similar after a Node upgrade**:
+  the prebuilt native binary is tied to a specific Node ABI. Run
+  `cd server && npm rebuild better-sqlite3`.
+- **Freshly-linked institution shows no transactions yet**: Plaid may return
+  `PRODUCT_NOT_READY` for a minute or so after linking. The sync engine
+  retries with exponential backoff (1s / 3s / 9s). If it ultimately fails,
+  the error is recorded in `sync_meta.transactions_last_error` and will be
+  retried on the next refresh.
