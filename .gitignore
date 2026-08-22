@@ -6,5 +6,11 @@ dist/
 # Plaid access tokens — never commit
 server/items.json
 
+# SQLite cache (holds access tokens + cached balances/transactions)
+server/data/
+server/data/*.db
+server/data/*.db-wal
+server/data/*.db-shm
+
 .DS_Store
 *.log
