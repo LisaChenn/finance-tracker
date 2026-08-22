@@ -2,7 +2,7 @@ import "dotenv/config";
 import express, { Request, Response } from "express";
 import cors from "cors";
 import { Products, CountryCode } from "plaid";
-import { plaidClient } from "./plaid";
+import { plaidClient, plaidErrorSummary } from "./plaid";
 import { migrateFromJsonIfNeeded } from "./db";
 import {
   getAccountsForItem,
@@ -22,8 +22,10 @@ const PORT = Number(process.env.PORT) || 8080;
 
 migrateFromJsonIfNeeded();
 
+const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "http://localhost:5173";
+
 const app = express();
-app.use(cors());
+app.use(cors({ origin: CLIENT_ORIGIN }));
 app.use(express.json());
 
 function isRefreshRequested(req: Request): boolean {
@@ -43,7 +45,7 @@ app.post("/api/create_link_token", async (req: Request, res: Response) => {
     });
     res.json({ link_token: response.data.link_token });
   } catch (error: any) {
-    console.error("create_link_token error", error?.response?.data || error);
+    console.error("create_link_token error", plaidErrorSummary(error));
     res.status(500).json({ error: "Failed to create link token" });
   }
 });
@@ -79,10 +81,7 @@ app.post("/api/exchange_public_token", async (req: Request, res: Response) => {
     scheduleSyncTransactions(item.item_id);
     res.json({ success: true, item_id: item.item_id });
   } catch (error: any) {
-    console.error(
-      "exchange_public_token error",
-      error?.response?.data || error
-    );
+    console.error("exchange_public_token error", plaidErrorSummary(error));
     res.status(500).json({ error: "Failed to exchange public token" });
   }
 });
@@ -191,6 +190,11 @@ app.get("/api/items", (req: Request, res: Response) => {
   res.json({ items });
 });
 
-app.listen(PORT, () => {
-  console.log(`Finance tracker server listening on http://localhost:${PORT}`);
+// Bind to loopback only — this app has no auth layer and holds Plaid
+// access tokens, so it must not be reachable from other machines on the
+// local network. Override via HOST env var if you really need to (don't).
+const HOST = process.env.HOST || "127.0.0.1";
+
+app.listen(PORT, HOST, () => {
+  console.log(`Finance tracker server listening on http://${HOST}:${PORT}`);
 });

@@ -1,4 +1,4 @@
-import { plaidClient } from "./plaid";
+import { plaidClient, plaidErrorSummary } from "./plaid";
 import {
   applySyncPage,
   getItem,
@@ -36,7 +36,7 @@ async function refreshAccountsInternal(item_id: string): Promise<void> {
   } catch (err: any) {
     console.error(
       `[sync] refreshAccounts failed for ${item.institution_name}`,
-      err?.response?.data || err
+      plaidErrorSummary(err)
     );
   }
 }
@@ -94,7 +94,7 @@ async function syncTransactionsInternal(item_id: string): Promise<void> {
       const msg = code ?? err?.message ?? String(err);
       console.error(
         `[sync] syncTransactions failed for ${item.institution_name}: ${msg}`,
-        err?.response?.data || ""
+        plaidErrorSummary(err)
       );
       setTransactionsLastError(item_id, msg);
       return;
