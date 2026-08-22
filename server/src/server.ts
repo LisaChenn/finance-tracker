@@ -22,10 +22,21 @@ const PORT = Number(process.env.PORT) || 8080;
 
 migrateFromJsonIfNeeded();
 
-const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "http://localhost:5173";
+// Restrict CORS to localhost/127.0.0.1 dev servers only. Remote pages
+// can't spoof a localhost Origin header, so this blocks the "malicious
+// website reads your bank data via fetch()" vector while still letting
+// Vite pick any local port (5173, 5174, 5175 fallback, etc.).
+const LOCAL_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 
 const app = express();
-app.use(cors({ origin: CLIENT_ORIGIN }));
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      if (!origin || LOCAL_ORIGIN_RE.test(origin)) return cb(null, true);
+      cb(new Error(`Origin not allowed: ${origin}`));
+    },
+  })
+);
 app.use(express.json());
 
 function isRefreshRequested(req: Request): boolean {
