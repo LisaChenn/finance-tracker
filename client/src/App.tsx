@@ -1,25 +1,32 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import LinkButton from "./LinkButton";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import OverviewView from "./OverviewView";
+import AccountsView from "./AccountsView";
 import SpendingView from "./SpendingView";
 import { useSyncPoller } from "./lib/useSyncPoller";
-import type { AccountGroup, LinkedItem } from "./types";
+import type {
+  AccountGroup,
+  AnnotatedTransaction,
+  LinkedItem,
+  TransactionsResponse,
+} from "./types";
+import { computeDateRange, flattenGroups } from "./lib/transactions";
+import type { ViewName } from "./TabHeader";
 
-const INSTITUTIONS = ["Chase", "Bank of America", "SoFi", "Fidelity"];
-
-type View = "accounts" | "spending";
-
-function formatCurrency(value: number | null): string {
-  if (value === null || value === undefined) return "—";
-  return value.toLocaleString("en-US", { style: "currency", currency: "USD" });
-}
-
-// If a third top-level view is added, migrate to react-router-dom.
 export default function App() {
+  const [view, setView] = useState<ViewName>("overview");
   const [groups, setGroups] = useState<AccountGroup[]>([]);
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [linkedInstitutions, setLinkedInstitutions] = useState<Set<string>>(new Set());
-  const [view, setView] = useState<View>("accounts");
+  const [linkedInstitutions, setLinkedInstitutions] = useState<Set<string>>(
+    new Set()
+  );
+
+  // Shared 30-day transactions window (for Overview)
+  const [txnData, setTxnData] = useState<TransactionsResponse | null>(null);
+  const txnCacheRef = useRef<Map<string, TransactionsResponse>>(new Map());
+
+  const { start, end } = useMemo(() => computeDateRange("30d", new Date()), []);
+  const rangeKey = `${start}|${end}`;
 
   const fetchAccounts = useCallback(async (refresh = false) => {
     setLoading(true);
@@ -36,10 +43,35 @@ export default function App() {
     }
   }, []);
 
+  const fetchOverviewTxns = useCallback(
+    async (refresh = false) => {
+      try {
+        const url = refresh
+          ? `/api/transactions?start=${start}&end=${end}&refresh=1`
+          : `/api/transactions?start=${start}&end=${end}`;
+        const res = await fetch(url);
+        const data = (await res.json()) as TransactionsResponse;
+        txnCacheRef.current.set(rangeKey, data);
+        setTxnData(data);
+      } catch (err) {
+        console.error("Failed to fetch overview transactions", err);
+      }
+    },
+    [start, end, rangeKey]
+  );
+
   const accountsPoller = useSyncPoller({
     field: "accounts_fetched_at",
     onBump: () => {
       fetchAccounts(false);
+    },
+  });
+
+  const overviewTxnsPoller = useSyncPoller({
+    field: "transactions_fetched_at",
+    onBump: () => {
+      txnCacheRef.current.delete(rangeKey);
+      fetchOverviewTxns(false);
     },
   });
 
@@ -57,23 +89,42 @@ export default function App() {
   const refreshAll = useCallback(() => {
     fetchAccounts(true);
     fetchItems();
+    fetchOverviewTxns(true);
     accountsPoller.start();
-  }, [fetchAccounts, fetchItems, accountsPoller]);
+    overviewTxnsPoller.start();
+  }, [
+    fetchAccounts,
+    fetchItems,
+    fetchOverviewTxns,
+    accountsPoller,
+    overviewTxnsPoller,
+  ]);
 
   useEffect(() => {
     fetchAccounts(true);
     fetchItems();
+    fetchOverviewTxns(true);
     accountsPoller.start();
+    overviewTxnsPoller.start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const netWorth = groups.reduce((total, group) => {
-    const groupTotal = group.accounts.reduce(
-      (sum, account) => sum + (account.balances.current ?? 0),
-      0
-    );
-    return total + groupTotal;
-  }, 0);
+  const netWorth = useMemo(
+    () =>
+      groups.reduce(
+        (total, group) =>
+          total +
+          group.accounts.reduce(
+            (sum, a) =>
+              // Credit balances reduce net worth
+              sum +
+              ((a.type === "credit" ? -1 : 1) * (a.balances.current ?? 0)),
+            0
+          ),
+        0
+      ),
+    [groups]
+  );
 
   const flatAccounts = useMemo(
     () =>
@@ -87,76 +138,60 @@ export default function App() {
     [groups]
   );
 
+  const accountLookup = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of flatAccounts) m.set(a.account_id, a.name);
+    return m;
+  }, [flatAccounts]);
+
+  const overviewTxns = useMemo<AnnotatedTransaction[]>(() => {
+    if (!txnData) return [];
+    return flattenGroups(txnData.groups, accountLookup).sort((a, b) =>
+      a.date < b.date ? 1 : a.date > b.date ? -1 : 0
+    );
+  }, [txnData, accountLookup]);
+
+  const lastSyncedLabel = lastUpdated
+    ? lastUpdated.toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : "…";
+
   return (
-    <div className="app">
-      <header className="header">
-        <h1>Finance Dashboard</h1>
-        <div className="net-worth">
-          <span className="net-worth-label">Total Net Worth</span>
-          <span className="net-worth-value">{formatCurrency(netWorth)}</span>
-        </div>
-      </header>
-
-      <nav className="view-tabs">
-        <button
-          className={`view-tab${view === "accounts" ? " view-tab-active" : ""}`}
-          onClick={() => setView("accounts")}
-        >
-          Accounts
-        </button>
-        <button
-          className={`view-tab${view === "spending" ? " view-tab-active" : ""}`}
-          onClick={() => setView("spending")}
-        >
-          Spending
-        </button>
-      </nav>
-
-      <div className="actions">
-        {INSTITUTIONS.map((institution) => (
-          <LinkButton
-            key={institution}
-            institutionName={institution}
-            isLinked={linkedInstitutions.has(institution)}
-            onLinked={refreshAll}
-          />
-        ))}
-        <button className="refresh-button" onClick={refreshAll} disabled={loading}>
-          {loading ? "Refreshing..." : accountsPoller.active ? "Updating…" : "Refresh"}
-        </button>
-      </div>
-
-      {lastUpdated && (
-        <p className="last-updated">Last updated: {lastUpdated.toLocaleTimeString()}</p>
+    <div className="max-w-[1240px] mx-auto px-5 pt-8 pb-16">
+      {view === "overview" && (
+        <OverviewView
+          groups={groups}
+          txns={overviewTxns}
+          netWorth={netWorth}
+          start={start}
+          end={end}
+          linkedInstitutions={linkedInstitutions}
+          onLinked={refreshAll}
+          view={view}
+          onViewChange={setView}
+        />
       )}
-
-      {view === "accounts" ? (
-        <div className="account-groups">
-          {groups.length === 0 && !loading && (
-            <p className="empty-state">No accounts linked yet. Use the buttons above to get started.</p>
-          )}
-          {groups.map((group) => (
-            <div className="card" key={group.item_id}>
-              <h2>{group.institution_name}</h2>
-              {group.error && <p className="error">{group.error}</p>}
-              <ul className="account-list">
-                {group.accounts.map((account) => (
-                  <li key={account.account_id} className="account-row">
-                    <div className="account-info">
-                      <span className="account-name">{account.name}</span>
-                      <span className="account-subtype">{account.subtype ?? account.type}</span>
-                    </div>
-                    <span className="account-balance">
-                      {formatCurrency(account.balances.current)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <SpendingView accounts={flatAccounts} />
+      {view === "accounts" && (
+        <AccountsView
+          groups={groups}
+          netWorth={netWorth}
+          lastSyncedLabel={lastSyncedLabel}
+          loading={loading || accountsPoller.active}
+          onRefresh={refreshAll}
+          linkedInstitutions={linkedInstitutions}
+          onLinked={refreshAll}
+          view={view}
+          onViewChange={setView}
+        />
+      )}
+      {view === "spending" && (
+        <SpendingView
+          accounts={flatAccounts}
+          view={view}
+          onViewChange={setView}
+        />
       )}
     </div>
   );

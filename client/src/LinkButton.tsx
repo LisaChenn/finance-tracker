@@ -1,13 +1,32 @@
 import { useCallback, useEffect, useState } from "react";
 import { usePlaidLink } from "react-plaid-link";
 
+type Variant = "chip" | "solid" | "default";
+
 interface LinkButtonProps {
   institutionName: string;
   isLinked: boolean;
   onLinked: () => void;
+  variant?: Variant;
+  labelWhenUnlinked?: string;
+  labelWhenLinked?: string;
 }
 
-export default function LinkButton({ institutionName, isLinked, onLinked }: LinkButtonProps) {
+const CHIP_BASE =
+  "font-semibold text-[11.5px] leading-none px-3 py-[7px] rounded-full transition-colors disabled:opacity-60 disabled:cursor-default";
+const CHIP_SOFT = `${CHIP_BASE} bg-accent-soft text-accent-text hover:bg-[rgba(77,141,255,0.28)]`;
+const CHIP_SOLID = `${CHIP_BASE} bg-accent text-[#08080a] hover:bg-[#6ea3ff]`;
+const PILL =
+  "font-medium text-[11.5px] leading-none px-[13px] py-2 rounded-full bg-white/5 text-ink/70 hover:bg-white/10 transition-colors disabled:opacity-50 disabled:cursor-default";
+
+export default function LinkButton({
+  institutionName,
+  isLinked,
+  onLinked,
+  variant = "default",
+  labelWhenUnlinked,
+  labelWhenLinked,
+}: LinkButtonProps) {
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -54,14 +73,17 @@ export default function LinkButton({ institutionName, isLinked, onLinked }: Link
   }, [linkToken, ready, open]);
 
   const label = loading
-    ? "Loading..."
+    ? "…"
     : isLinked
-    ? `✓ ${institutionName} Linked`
-    : `Link ${institutionName}`;
+      ? (labelWhenLinked ?? `✓ ${institutionName}`)
+      : (labelWhenUnlinked ?? `Link ${institutionName}`);
+
+  const className =
+    variant === "chip" ? CHIP_SOFT : variant === "solid" ? CHIP_SOLID : PILL;
 
   return (
     <button
-      className={`link-button${isLinked ? " link-button-linked" : ""}`}
+      className={className}
       onClick={fetchLinkToken}
       disabled={loading}
       title={isLinked ? `Click to re-link ${institutionName}` : undefined}
