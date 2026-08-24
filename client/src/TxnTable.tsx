@@ -6,7 +6,7 @@ import {
   titleCase,
 } from "./lib/transactions";
 
-const PAGE_SIZE = 8;
+const PAGE_SIZE = 15;
 
 interface Props {
   txns: AnnotatedTransaction[];
