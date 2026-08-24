@@ -9,6 +9,7 @@ import {
 import LinkButton from "./LinkButton";
 import TabHeader, { type ViewName } from "./TabHeader";
 
+//You can change depending on your institution
 const KNOWN_INSTITUTIONS = ["Chase", "Bank of America", "SoFi", "Fidelity"];
 
 interface Props {
