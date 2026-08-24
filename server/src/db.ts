@@ -3,7 +3,12 @@ import path from "path";
 import Database from "better-sqlite3";
 
 const DATA_DIR = path.join(__dirname, "..", "data");
-const DB_PATH = path.join(DATA_DIR, "finance.db");
+// One DB file per Plaid environment. Access tokens are env-scoped
+// (a production token is rejected in sandbox and vice-versa), so keeping
+// sandbox/production/mock in separate files lets you flip PLAID_ENV
+// without touching the other environment's linked items.
+const PLAID_ENV = process.env.PLAID_ENV || "sandbox";
+const DB_PATH = path.join(DATA_DIR, `finance.${PLAID_ENV}.db`);
 const LEGACY_ITEMS_FILE = path.join(__dirname, "..", "items.json");
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -120,6 +125,10 @@ interface LegacyItem {
 }
 
 export function migrateFromJsonIfNeeded(): void {
+  // items.json predates env-scoped DBs — its tokens were production, so
+  // only ever import them into the production DB. Otherwise a fresh
+  // sandbox/mock DB would inherit unusable production tokens.
+  if (PLAID_ENV !== "production") return;
   const row = db.prepare("SELECT COUNT(*) as n FROM items").get() as { n: number };
   if (row.n > 0) return;
   if (!fs.existsSync(LEGACY_ITEMS_FILE)) return;
