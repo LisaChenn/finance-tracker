@@ -68,3 +68,40 @@ export interface AnnotatedTransaction extends PlaidTransaction {
   account_name: string;
   personal_finance_category: PlaidPersonalFinanceCategory;
 }
+
+export interface Security {
+  ticker_symbol: string | null;
+  name: string | null;
+  type: string | null;
+  close_price: number | null;
+  close_price_as_of: string | null;
+  iso_currency_code: string | null;
+}
+
+export interface Holding {
+  account_id: string;
+  security_id: string;
+  quantity: number | null;
+  institution_price: number | null;
+  institution_value: number | null;
+  cost_basis: number | null;
+  iso_currency_code: string | null;
+  security: Security;
+}
+
+export interface HoldingsGroup {
+  institution_name: string;
+  item_id: string;
+  holdings: Holding[];
+  fetched_at: string | null;
+  stale_reason?: string;
+}
+
+export interface InvestmentsResponse {
+  groups: HoldingsGroup[];
+}
+
+export interface AnnotatedHolding extends Holding {
+  institution_name: string;
+  account_name: string;
+}

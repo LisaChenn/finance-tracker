@@ -12,6 +12,8 @@ export interface SyncMeta {
   accounts_fetched_at: string | null;
   transactions_fetched_at: string | null;
   transactions_last_error: string | null;
+  investments_fetched_at: string | null;
+  investments_last_error: string | null;
 }
 
 export interface StoredAccount {
@@ -134,6 +136,12 @@ const setTransactionsFetchedAtStmt = db.prepare(
 const setTransactionsLastErrorStmt = db.prepare(
   `UPDATE sync_meta SET transactions_last_error = ? WHERE item_id = ?`
 );
+const setInvestmentsFetchedAtStmt = db.prepare(
+  `UPDATE sync_meta SET investments_fetched_at = ? WHERE item_id = ?`
+);
+const setInvestmentsLastErrorStmt = db.prepare(
+  `UPDATE sync_meta SET investments_last_error = ? WHERE item_id = ?`
+);
 
 export function getSyncMeta(item_id: string): SyncMeta | null {
   return (selectSyncMeta.get(item_id) as SyncMeta | undefined) ?? null;
@@ -156,6 +164,17 @@ export function setTransactionsLastError(
   msg: string | null
 ): void {
   setTransactionsLastErrorStmt.run(msg, item_id);
+}
+
+export function setInvestmentsFetchedAt(item_id: string, iso: string): void {
+  setInvestmentsFetchedAtStmt.run(iso, item_id);
+}
+
+export function setInvestmentsLastError(
+  item_id: string,
+  msg: string | null
+): void {
+  setInvestmentsLastErrorStmt.run(msg, item_id);
 }
 
 // --- Accounts ---
@@ -321,4 +340,180 @@ export function applySyncPage(
     updateCursor.run(next_cursor, item_id);
   });
   tx();
+}
+
+// --- Investments (securities + holdings) ---
+
+const upsertSecurityStmt = db.prepare(
+  `INSERT INTO securities (
+     security_id, ticker_symbol, name, type, close_price, close_price_as_of,
+     iso_currency_code, updated_at
+   ) VALUES (@security_id, @ticker_symbol, @name, @type, @close_price,
+     @close_price_as_of, @iso_currency_code, @updated_at)
+   ON CONFLICT(security_id) DO UPDATE SET
+     ticker_symbol = excluded.ticker_symbol,
+     name = excluded.name,
+     type = excluded.type,
+     close_price = excluded.close_price,
+     close_price_as_of = excluded.close_price_as_of,
+     iso_currency_code = excluded.iso_currency_code,
+     updated_at = excluded.updated_at`
+);
+
+const upsertHoldingStmt = db.prepare(
+  `INSERT INTO holdings (
+     account_id, security_id, item_id, quantity, institution_price,
+     institution_value, cost_basis, iso_currency_code, updated_at
+   ) VALUES (@account_id, @security_id, @item_id, @quantity, @institution_price,
+     @institution_value, @cost_basis, @iso_currency_code, @updated_at)
+   ON CONFLICT(account_id, security_id) DO UPDATE SET
+     item_id = excluded.item_id,
+     quantity = excluded.quantity,
+     institution_price = excluded.institution_price,
+     institution_value = excluded.institution_value,
+     cost_basis = excluded.cost_basis,
+     iso_currency_code = excluded.iso_currency_code,
+     updated_at = excluded.updated_at`
+);
+
+const deleteHoldingsForItemStmt = db.prepare(
+  `DELETE FROM holdings WHERE item_id = ?`
+);
+
+const selectHoldingsForItemStmt = db.prepare(
+  `SELECT h.account_id, h.security_id, h.quantity, h.institution_price,
+          h.institution_value, h.cost_basis, h.iso_currency_code,
+          s.ticker_symbol AS s_ticker_symbol,
+          s.name          AS s_name,
+          s.type          AS s_type,
+          s.close_price   AS s_close_price,
+          s.close_price_as_of AS s_close_price_as_of,
+          s.iso_currency_code AS s_iso_currency_code
+     FROM holdings h
+     LEFT JOIN securities s USING (security_id)
+    WHERE h.item_id = ?`
+);
+
+interface PlaidSecurityLike {
+  security_id: string;
+  ticker_symbol?: string | null;
+  name?: string | null;
+  type?: string | null;
+  close_price?: number | null;
+  close_price_as_of?: string | null;
+  iso_currency_code?: string | null;
+  unofficial_currency_code?: string | null;
+}
+
+interface PlaidHoldingLike {
+  account_id: string;
+  security_id: string;
+  quantity?: number | null;
+  institution_price?: number | null;
+  institution_value?: number | null;
+  cost_basis?: number | null;
+  iso_currency_code?: string | null;
+  unofficial_currency_code?: string | null;
+}
+
+export interface StoredHoldingRow {
+  account_id: string;
+  security_id: string;
+  quantity: number | null;
+  institution_price: number | null;
+  institution_value: number | null;
+  cost_basis: number | null;
+  iso_currency_code: string | null;
+  security: {
+    ticker_symbol: string | null;
+    name: string | null;
+    type: string | null;
+    close_price: number | null;
+    close_price_as_of: string | null;
+    iso_currency_code: string | null;
+  };
+}
+
+export function upsertSecurities(securities: PlaidSecurityLike[]): void {
+  const now = new Date().toISOString();
+  const tx = db.transaction((rows: PlaidSecurityLike[]) => {
+    for (const s of rows) {
+      upsertSecurityStmt.run({
+        security_id: s.security_id,
+        ticker_symbol: s.ticker_symbol ?? null,
+        name: s.name ?? null,
+        type: s.type ?? null,
+        close_price: s.close_price ?? null,
+        close_price_as_of: s.close_price_as_of ?? null,
+        iso_currency_code:
+          s.iso_currency_code ?? s.unofficial_currency_code ?? null,
+        updated_at: now,
+      });
+    }
+  });
+  tx(securities);
+}
+
+// Replace-in-place: delete stale holdings for this item, then insert current.
+// This matches how the Plaid response reflects the full current state.
+export function replaceHoldings(
+  item_id: string,
+  holdings: PlaidHoldingLike[]
+): void {
+  const now = new Date().toISOString();
+  const tx = db.transaction((rows: PlaidHoldingLike[]) => {
+    deleteHoldingsForItemStmt.run(item_id);
+    for (const h of rows) {
+      upsertHoldingStmt.run({
+        account_id: h.account_id,
+        security_id: h.security_id,
+        item_id,
+        quantity: h.quantity ?? null,
+        institution_price: h.institution_price ?? null,
+        institution_value: h.institution_value ?? null,
+        cost_basis: h.cost_basis ?? null,
+        iso_currency_code:
+          h.iso_currency_code ?? h.unofficial_currency_code ?? null,
+        updated_at: now,
+      });
+    }
+  });
+  tx(holdings);
+}
+
+interface HoldingJoinRow {
+  account_id: string;
+  security_id: string;
+  quantity: number | null;
+  institution_price: number | null;
+  institution_value: number | null;
+  cost_basis: number | null;
+  iso_currency_code: string | null;
+  s_ticker_symbol: string | null;
+  s_name: string | null;
+  s_type: string | null;
+  s_close_price: number | null;
+  s_close_price_as_of: string | null;
+  s_iso_currency_code: string | null;
+}
+
+export function getHoldingsForItem(item_id: string): StoredHoldingRow[] {
+  const rows = selectHoldingsForItemStmt.all(item_id) as HoldingJoinRow[];
+  return rows.map((r) => ({
+    account_id: r.account_id,
+    security_id: r.security_id,
+    quantity: r.quantity,
+    institution_price: r.institution_price,
+    institution_value: r.institution_value,
+    cost_basis: r.cost_basis,
+    iso_currency_code: r.iso_currency_code,
+    security: {
+      ticker_symbol: r.s_ticker_symbol,
+      name: r.s_name,
+      type: r.s_type,
+      close_price: r.s_close_price,
+      close_price_as_of: r.s_close_price_as_of,
+      iso_currency_code: r.s_iso_currency_code,
+    },
+  }));
 }

@@ -64,7 +64,48 @@ function initSchema(): void {
       transactions_fetched_at TEXT,
       transactions_last_error TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS securities (
+      security_id TEXT PRIMARY KEY,
+      ticker_symbol TEXT,
+      name TEXT,
+      type TEXT,
+      close_price REAL,
+      close_price_as_of TEXT,
+      iso_currency_code TEXT,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS holdings (
+      account_id TEXT NOT NULL,
+      security_id TEXT NOT NULL REFERENCES securities(security_id),
+      item_id TEXT NOT NULL REFERENCES items(item_id) ON DELETE CASCADE,
+      quantity REAL,
+      institution_price REAL,
+      institution_value REAL,
+      cost_basis REAL,
+      iso_currency_code TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (account_id, security_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_holdings_item ON holdings(item_id);
   `);
+
+  addColumnIfMissing("sync_meta", "investments_fetched_at", "TEXT");
+  addColumnIfMissing("sync_meta", "investments_last_error", "TEXT");
+}
+
+function addColumnIfMissing(
+  table: string,
+  column: string,
+  defn: string
+): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as {
+    name: string;
+  }[];
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${defn}`);
+  }
 }
 
 // Run at module load so tables exist before any importer's top-level

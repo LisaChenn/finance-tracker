@@ -4,14 +4,19 @@ import {
   getItem,
   getItemCursor,
   getItems,
+  replaceHoldings,
   setAccountsFetchedAt,
+  setInvestmentsFetchedAt,
+  setInvestmentsLastError,
   setTransactionsFetchedAt,
   setTransactionsLastError,
   upsertAccounts,
+  upsertSecurities,
 } from "./store";
 
 const inflightAccounts = new Map<string, Promise<void>>();
 const inflightTransactions = new Map<string, Promise<void>>();
+const inflightInvestments = new Map<string, Promise<void>>();
 
 const PRODUCT_NOT_READY = "PRODUCT_NOT_READY";
 const PRODUCT_NOT_READY_DELAYS_MS = [1000, 3000, 9000];
@@ -102,6 +107,50 @@ async function syncTransactionsInternal(item_id: string): Promise<void> {
   }
 }
 
+async function refreshInvestmentsInternal(item_id: string): Promise<void> {
+  const item = getItem(item_id);
+  if (!item) return;
+
+  let attempt = 0;
+  while (true) {
+    try {
+      const response = await plaidClient.investmentsHoldingsGet({
+        access_token: item.access_token,
+      });
+      const { securities, holdings } = response.data;
+      upsertSecurities(securities as any);
+      replaceHoldings(item_id, holdings as any);
+      setInvestmentsFetchedAt(item_id, new Date().toISOString());
+      setInvestmentsLastError(item_id, null);
+      console.log(
+        `[sync] ${item.institution_name}: ${holdings.length} holding(s), ${securities.length} securit${securities.length === 1 ? "y" : "ies"}`
+      );
+      return;
+    } catch (err: any) {
+      const code = plaidErrorCode(err);
+      if (
+        code === PRODUCT_NOT_READY &&
+        attempt < PRODUCT_NOT_READY_DELAYS_MS.length
+      ) {
+        const wait = PRODUCT_NOT_READY_DELAYS_MS[attempt];
+        attempt++;
+        console.log(
+          `[sync] ${item.institution_name} investments: PRODUCT_NOT_READY, retry #${attempt} in ${wait}ms`
+        );
+        await sleep(wait);
+        continue;
+      }
+      const msg = code ?? err?.message ?? String(err);
+      console.error(
+        `[sync] refreshInvestments failed for ${item.institution_name}: ${msg}`,
+        plaidErrorSummary(err)
+      );
+      setInvestmentsLastError(item_id, msg);
+      return;
+    }
+  }
+}
+
 export function scheduleRefreshAccounts(item_id: string): Promise<void> {
   const existing = inflightAccounts.get(item_id);
   if (existing) return existing;
@@ -122,10 +171,21 @@ export function scheduleSyncTransactions(item_id: string): Promise<void> {
   return p;
 }
 
+export function scheduleRefreshInvestments(item_id: string): Promise<void> {
+  const existing = inflightInvestments.get(item_id);
+  if (existing) return existing;
+  const p = refreshInvestmentsInternal(item_id).finally(() =>
+    inflightInvestments.delete(item_id)
+  );
+  inflightInvestments.set(item_id, p);
+  return p;
+}
+
 export function scheduleRefreshItem(item_id: string): Promise<void> {
   return Promise.all([
     scheduleRefreshAccounts(item_id),
     scheduleSyncTransactions(item_id),
+    scheduleRefreshInvestments(item_id),
   ]).then(() => undefined);
 }
 

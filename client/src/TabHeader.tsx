@@ -1,4 +1,4 @@
-export type ViewName = "overview" | "accounts" | "spending";
+export type ViewName = "overview" | "accounts" | "spending" | "investments";
 
 interface Props {
   active: ViewName;
@@ -10,6 +10,7 @@ const TABS: { id: ViewName; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "accounts", label: "Accounts" },
   { id: "spending", label: "Spending" },
+  { id: "investments", label: "Investments" },
 ];
 
 export default function TabHeader({ active, onChange, right }: Props) {

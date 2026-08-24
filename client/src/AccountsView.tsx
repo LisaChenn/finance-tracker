@@ -304,6 +304,11 @@ export default function AccountsView({
           barPct={investedPct}
           barClass="bg-white/50"
           hint={`${totals.investedAccts} account${totals.investedAccts === 1 ? "" : "s"}`}
+          action={
+            totals.investedAccts > 0
+              ? { label: "See positions →", onClick: () => onViewChange("investments") }
+              : undefined
+          }
         />
         <SummaryBlock
           label="Credit due"
@@ -367,12 +372,14 @@ function SummaryBlock({
   barPct,
   barClass,
   hint,
+  action,
 }: {
   label: string;
   value: number;
   barPct: number;
   barClass: string;
   hint: string;
+  action?: { label: string; onClick: () => void };
 }) {
   return (
     <div className="min-w-0">
@@ -386,8 +393,18 @@ function SummaryBlock({
           style={{ width: `${barPct}%` }}
         />
       </div>
-      <div className="font-medium text-[11px] leading-none text-ink-fainter mt-2">
-        {hint}
+      <div className="flex items-center justify-between gap-2 mt-2">
+        <span className="font-medium text-[11px] leading-none text-ink-fainter">
+          {hint}
+        </span>
+        {action && (
+          <button
+            onClick={action.onClick}
+            className="font-medium text-[11px] leading-none text-accent-text hover:text-ink transition-colors"
+          >
+            {action.label}
+          </button>
+        )}
       </div>
     </div>
   );

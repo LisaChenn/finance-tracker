@@ -2,10 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import OverviewView from "./OverviewView";
 import AccountsView from "./AccountsView";
 import SpendingView from "./SpendingView";
+import InvestmentsView from "./InvestmentsView";
 import { useSyncPoller } from "./lib/useSyncPoller";
 import type {
   AccountGroup,
   AnnotatedTransaction,
+  HoldingsGroup,
+  InvestmentsResponse,
   LinkedItem,
   TransactionsResponse,
 } from "./types";
@@ -24,6 +27,10 @@ export default function App() {
   // Shared 30-day transactions window (for Overview)
   const [txnData, setTxnData] = useState<TransactionsResponse | null>(null);
   const txnCacheRef = useRef<Map<string, TransactionsResponse>>(new Map());
+
+  const [investmentsGroups, setInvestmentsGroups] = useState<HoldingsGroup[]>(
+    []
+  );
 
   const { start, end } = useMemo(() => computeDateRange("30d", new Date()), []);
   const rangeKey = `${start}|${end}`;
@@ -60,6 +67,17 @@ export default function App() {
     [start, end, rangeKey]
   );
 
+  const fetchInvestments = useCallback(async (refresh = false) => {
+    try {
+      const url = refresh ? "/api/investments?refresh=1" : "/api/investments";
+      const res = await fetch(url);
+      const data = (await res.json()) as InvestmentsResponse;
+      setInvestmentsGroups(data.groups ?? []);
+    } catch (err) {
+      console.error("Failed to fetch investments", err);
+    }
+  }, []);
+
   const accountsPoller = useSyncPoller({
     field: "accounts_fetched_at",
     onBump: () => {
@@ -72,6 +90,13 @@ export default function App() {
     onBump: () => {
       txnCacheRef.current.delete(rangeKey);
       fetchOverviewTxns(false);
+    },
+  });
+
+  const investmentsPoller = useSyncPoller({
+    field: "investments_fetched_at",
+    onBump: () => {
+      fetchInvestments(false);
     },
   });
 
@@ -90,22 +115,28 @@ export default function App() {
     fetchAccounts(true);
     fetchItems();
     fetchOverviewTxns(true);
+    fetchInvestments(true);
     accountsPoller.start();
     overviewTxnsPoller.start();
+    investmentsPoller.start();
   }, [
     fetchAccounts,
     fetchItems,
     fetchOverviewTxns,
+    fetchInvestments,
     accountsPoller,
     overviewTxnsPoller,
+    investmentsPoller,
   ]);
 
   useEffect(() => {
     fetchAccounts(true);
     fetchItems();
     fetchOverviewTxns(true);
+    fetchInvestments(true);
     accountsPoller.start();
     overviewTxnsPoller.start();
+    investmentsPoller.start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -189,6 +220,17 @@ export default function App() {
       {view === "spending" && (
         <SpendingView
           accounts={flatAccounts}
+          view={view}
+          onViewChange={setView}
+        />
+      )}
+      {view === "investments" && (
+        <InvestmentsView
+          groups={investmentsGroups}
+          accountGroups={groups}
+          lastSyncedLabel={lastSyncedLabel}
+          loading={loading || investmentsPoller.active}
+          onRefresh={refreshAll}
           view={view}
           onViewChange={setView}
         />

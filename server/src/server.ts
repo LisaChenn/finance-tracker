@@ -7,6 +7,7 @@ import { migrateFromJsonIfNeeded } from "./db";
 import {
   getAccountsForItem,
   getAllSyncMeta,
+  getHoldingsForItem,
   getItems,
   getSyncMeta,
   getTransactionsInRange,
@@ -15,6 +16,7 @@ import {
 } from "./store";
 import {
   scheduleRefreshAccounts,
+  scheduleRefreshInvestments,
   scheduleSyncTransactions,
 } from "./sync";
 
@@ -90,6 +92,7 @@ app.post("/api/exchange_public_token", async (req: Request, res: Response) => {
     // immediately. PRODUCT_NOT_READY retries live inside sync.ts.
     scheduleRefreshAccounts(item.item_id);
     scheduleSyncTransactions(item.item_id);
+    scheduleRefreshInvestments(item.item_id);
     res.json({ success: true, item_id: item.item_id });
   } catch (error: any) {
     console.error("exchange_public_token error", plaidErrorSummary(error));
@@ -187,9 +190,37 @@ app.get("/api/sync/status", (req: Request, res: Response) => {
       accounts_fetched_at: m?.accounts_fetched_at ?? null,
       transactions_fetched_at: m?.transactions_fetched_at ?? null,
       transactions_last_error: m?.transactions_last_error ?? null,
+      investments_fetched_at: m?.investments_fetched_at ?? null,
+      investments_last_error: m?.investments_last_error ?? null,
     };
   });
   res.json({ items: out });
+});
+
+app.get("/api/investments", (req: Request, res: Response) => {
+  const items = getItems();
+  const refresh = isRefreshRequested(req);
+
+  const groups = items.map((item) => {
+    const holdings = getHoldingsForItem(item.item_id);
+    const meta = getSyncMeta(item.item_id);
+    const fetched_at = meta?.investments_fetched_at ?? null;
+    const stale_reason = meta?.investments_last_error ?? undefined;
+
+    if (refresh || fetched_at === null) {
+      scheduleRefreshInvestments(item.item_id);
+    }
+
+    return {
+      institution_name: item.institution_name,
+      item_id: item.item_id,
+      holdings,
+      fetched_at,
+      ...(stale_reason ? { stale_reason } : {}),
+    };
+  });
+
+  res.json({ groups, cached: true });
 });
 
 app.get("/api/items", (req: Request, res: Response) => {

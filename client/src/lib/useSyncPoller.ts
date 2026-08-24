@@ -6,9 +6,14 @@ export interface SyncStatusItem {
   accounts_fetched_at: string | null;
   transactions_fetched_at: string | null;
   transactions_last_error: string | null;
+  investments_fetched_at: string | null;
+  investments_last_error: string | null;
 }
 
-type Field = "accounts_fetched_at" | "transactions_fetched_at";
+type Field =
+  | "accounts_fetched_at"
+  | "transactions_fetched_at"
+  | "investments_fetched_at";
 
 interface Options {
   field: Field;
