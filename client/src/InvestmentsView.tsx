@@ -6,16 +6,18 @@ import type {
   DepositAllocation,
   DriftResponse,
   HoldingsGroup,
+  HoldingsSnapshot,
   UnclassifiedHolding,
 } from "./types";
 import { formatCurrency, initials, titleCase } from "./lib/transactions";
-import { Donut } from "./lib/charts";
+import { Donut, Sparkline } from "./lib/charts";
 import TabHeader, { type ViewName } from "./TabHeader";
 
 interface Props {
   groups: HoldingsGroup[];
   accountGroups: AccountGroup[];
   drift: DriftResponse | null;
+  history: HoldingsSnapshot[];
   onTargetsChanged: () => void;
   lastSyncedLabel: string;
   loading: boolean;
@@ -89,6 +91,7 @@ export default function InvestmentsView({
   groups,
   accountGroups,
   drift,
+  history,
   onTargetsChanged,
   lastSyncedLabel,
   loading,
@@ -182,6 +185,31 @@ export default function InvestmentsView({
 
   const hasHoldings = holdings.length > 0;
 
+  // Chart today's live total on top of any earlier snapshots so the line
+  // reaches "now" instead of stopping at the last saved day. If the most
+  // recent snapshot is already today, overwrite it — same date, fresher value.
+  const sparkPoints = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    const base = history.map((s) => ({ date: s.date, value: s.total_value }));
+    if (hasHoldings) {
+      const last = base[base.length - 1];
+      if (last && last.date === today) {
+        last.value = totalValue;
+      } else {
+        base.push({ date: today, value: totalValue });
+      }
+    }
+    return base;
+  }, [history, hasHoldings, totalValue]);
+
+  const pctChange = useMemo(() => {
+    if (sparkPoints.length < 2) return null;
+    const first = sparkPoints[0].value;
+    const last = sparkPoints[sparkPoints.length - 1].value;
+    if (Math.abs(first) < 1) return null;
+    return ((last - first) / Math.abs(first)) * 100;
+  }, [sparkPoints]);
+
   return (
     <div className="bg-card rounded-[20px] p-[26px] shadow-card">
       <TabHeader
@@ -204,54 +232,81 @@ export default function InvestmentsView({
       />
 
       {/* Summary panel */}
-      <div className="bg-panel rounded-2xl p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1.4fr_1fr_1fr] gap-6 items-center">
-        <div>
-          <p className={CAPTION}>Market value</p>
-          <div className="flex items-end gap-2.5 mt-2.5">
-            <span className="font-bold text-[40px] leading-none tracking-tight tabular">
-              {formatCurrency(totalValue)}
-            </span>
+      <div className="bg-panel rounded-2xl p-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1.4fr_1fr_1fr] gap-6 items-center">
+          <div>
+            <p className={CAPTION}>Market value</p>
+            <div className="flex items-end gap-3 mt-2.5">
+              <span className="font-bold text-[40px] leading-none tracking-tight tabular">
+                {formatCurrency(totalValue)}
+              </span>
+              {pctChange !== null && (
+                <span
+                  className={
+                    "mb-1.5 font-semibold text-[12px] leading-none " +
+                    (pctChange >= 0 ? "text-accent-text" : "text-red-400")
+                  }
+                >
+                  {pctChange >= 0 ? "↑" : "↓"} {Math.abs(pctChange).toFixed(1)}%
+                </span>
+              )}
+            </div>
+            <p className="font-medium text-[11.5px] leading-tight text-ink-fainter mt-2">
+              {holdings.length} position{holdings.length === 1 ? "" : "s"} across{" "}
+              {groups.filter((g) => g.holdings.length > 0).length} institution
+              {groups.filter((g) => g.holdings.length > 0).length === 1 ? "" : "s"}
+            </p>
           </div>
-          <p className="font-medium text-[11.5px] leading-tight text-ink-fainter mt-2">
-            {holdings.length} position{holdings.length === 1 ? "" : "s"} across{" "}
-            {groups.filter((g) => g.holdings.length > 0).length} institution
-            {groups.filter((g) => g.holdings.length > 0).length === 1 ? "" : "s"}
-          </p>
-        </div>
 
-        {unrealized !== null ? (
+          {unrealized !== null ? (
+            <SummaryStat
+              label="Unrealized gain"
+              value={unrealized}
+              hint={
+                totalCost !== null
+                  ? `on ${formatCurrency(totalCost)} cost basis`
+                  : ""
+              }
+              signed
+            />
+          ) : (
+            <SummaryStat
+              label="Unrealized gain"
+              value={0}
+              hint="No cost basis reported"
+              muted
+            />
+          )}
+
           <SummaryStat
-            label="Unrealized gain"
-            value={unrealized}
+            label="Largest position"
+            value={
+              sortedHoldings.length > 0 ? holdingValue(sortedHoldings[0]) : 0
+            }
             hint={
-              totalCost !== null
-                ? `on ${formatCurrency(totalCost)} cost basis`
+              sortedHoldings.length > 0
+                ? sortedHoldings[0].security.ticker_symbol ??
+                  sortedHoldings[0].security.name ??
+                  ""
                 : ""
             }
-            signed
           />
-        ) : (
-          <SummaryStat
-            label="Unrealized gain"
-            value={0}
-            hint="No cost basis reported"
-            muted
+        </div>
+
+        {hasHoldings && sparkPoints.length >= 2 && (
+          <Sparkline
+            points={sparkPoints}
+            ariaLabel="Portfolio value trend"
+            fillGradientId="invFill"
+            className="block w-full h-auto mt-6"
           />
         )}
-
-        <SummaryStat
-          label="Largest position"
-          value={
-            sortedHoldings.length > 0 ? holdingValue(sortedHoldings[0]) : 0
-          }
-          hint={
-            sortedHoldings.length > 0
-              ? sortedHoldings[0].security.ticker_symbol ??
-                sortedHoldings[0].security.name ??
-                ""
-              : ""
-          }
-        />
+        {hasHoldings && sparkPoints.length < 2 && (
+          <p className="font-medium text-[11.5px] leading-tight text-ink-fainter mt-6">
+            Trend chart builds up as daily snapshots accumulate — check back
+            tomorrow.
+          </p>
+        )}
       </div>
 
       {/* Target allocation */}

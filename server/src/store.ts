@@ -633,3 +633,46 @@ export function setBucketOverride(ticker: string, bucket: string): void {
 export function deleteBucketOverride(ticker: string): void {
   deleteOverrideStmt.run(ticker.trim().toUpperCase());
 }
+
+// --- Holdings snapshots (daily portfolio total) ---
+
+export interface HoldingsSnapshot {
+  date: string;
+  total_value: number;
+}
+
+// Sum institution_value across every holding in the DB, falling back to
+// quantity * institution_price when institution_value is missing — same rule
+// the client uses in holdingValue().
+const selectTotalHoldingsValueStmt = db.prepare(
+  `SELECT COALESCE(SUM(
+     COALESCE(institution_value, quantity * institution_price, 0)
+   ), 0) AS total FROM holdings`
+);
+
+const upsertHoldingsSnapshotStmt = db.prepare(
+  `INSERT INTO holdings_snapshots (date, total_value, updated_at)
+   VALUES (?, ?, ?)
+   ON CONFLICT(date) DO UPDATE SET
+     total_value = excluded.total_value,
+     updated_at = excluded.updated_at`
+);
+
+const selectHoldingsSnapshotsSinceStmt = db.prepare(
+  `SELECT date, total_value FROM holdings_snapshots
+    WHERE date >= ?
+    ORDER BY date ASC`
+);
+
+export function getTotalHoldingsValue(): number {
+  const row = selectTotalHoldingsValueStmt.get() as { total: number };
+  return row.total ?? 0;
+}
+
+export function upsertHoldingsSnapshot(date: string, total_value: number): void {
+  upsertHoldingsSnapshotStmt.run(date, total_value, new Date().toISOString());
+}
+
+export function getHoldingsSnapshotsSince(sinceDate: string): HoldingsSnapshot[] {
+  return selectHoldingsSnapshotsSinceStmt.all(sinceDate) as HoldingsSnapshot[];
+}

@@ -101,6 +101,16 @@ export interface InvestmentsResponse {
   groups: HoldingsGroup[];
 }
 
+export interface HoldingsSnapshot {
+  date: string;
+  total_value: number;
+}
+
+export interface InvestmentsHistoryResponse {
+  days: number;
+  snapshots: HoldingsSnapshot[];
+}
+
 export interface AnnotatedHolding extends Holding {
   institution_name: string;
   account_name: string;

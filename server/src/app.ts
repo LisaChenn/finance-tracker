@@ -8,12 +8,15 @@ import {
   getAllSyncMeta,
   getBucketOverrides,
   getHoldingsForItem,
+  getHoldingsSnapshotsSince,
   getItems,
   getSyncMeta,
   getTargetAllocations,
+  getTotalHoldingsValue,
   getTransactionsInRange,
   setBucketOverride,
   setTargetAllocations,
+  upsertHoldingsSnapshot,
   upsertItem,
   StoredHoldingRow,
   StoredItem,
@@ -223,6 +226,61 @@ app.get("/api/investments", (req: Request, res: Response) => {
   });
 
   res.json({ groups, cached: true });
+});
+
+// Dev-only: fabricate a backward random walk of daily snapshots ending
+// yesterday, so the sparkline has something lived-in to draw before real
+// days accumulate. Refuses in production — never touch real snapshots.
+app.post("/api/investments/history/seed", (req: Request, res: Response) => {
+  if ((process.env.PLAID_ENV || "sandbox") === "production") {
+    return res
+      .status(403)
+      .json({ error: "Seeding is disabled when PLAID_ENV=production" });
+  }
+  const raw = req.query.days;
+  let days = 30;
+  if (raw !== undefined) {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 2 || parsed > 365) {
+      return res.status(400).json({ error: "days must be between 2 and 365" });
+    }
+    days = Math.floor(parsed);
+  }
+  // Anchor at the real current portfolio total so the fake history flows
+  // naturally into today's live value. Fallback if nothing's linked yet.
+  const anchor = getTotalHoldingsValue() || 50000;
+  const oneDay = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const written: { date: string; total_value: number }[] = [];
+  let value = anchor;
+  for (let i = 1; i <= days; i++) {
+    // Walk backward with ±1% noise so the line has visible movement but
+    // stays plausible (no spikes, no monotonic drift toward zero).
+    const factor = 1 + (Math.random() - 0.5) * 0.02;
+    value = value / factor;
+    const date = new Date(now - i * oneDay).toISOString().slice(0, 10);
+    written.push({ date, total_value: Math.round(value * 100) / 100 });
+  }
+  for (const s of written) upsertHoldingsSnapshot(s.date, s.total_value);
+  written.sort((a, b) => (a.date < b.date ? -1 : 1));
+  res.json({ seeded: written.length, anchor, snapshots: written });
+});
+
+app.get("/api/investments/history", (req: Request, res: Response) => {
+  const raw = req.query.days;
+  let days = 90;
+  if (raw !== undefined) {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return res.status(400).json({ error: "days must be a positive number" });
+    }
+    days = Math.min(Math.floor(parsed), 365);
+  }
+  const since = new Date(Date.now() - (days - 1) * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  const snapshots = getHoldingsSnapshotsSince(since);
+  res.json({ days, snapshots });
 });
 
 app.get("/api/allocation/targets", (_req: Request, res: Response) => {

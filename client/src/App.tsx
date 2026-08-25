@@ -9,6 +9,8 @@ import type {
   AnnotatedTransaction,
   DriftResponse,
   HoldingsGroup,
+  HoldingsSnapshot,
+  InvestmentsHistoryResponse,
   InvestmentsResponse,
   LinkedItem,
   TransactionsResponse,
@@ -33,6 +35,9 @@ export default function App() {
     []
   );
   const [drift, setDrift] = useState<DriftResponse | null>(null);
+  const [investmentsHistory, setInvestmentsHistory] = useState<
+    HoldingsSnapshot[]
+  >([]);
 
   const { start, end } = useMemo(() => computeDateRange("30d", new Date()), []);
   const rangeKey = `${start}|${end}`;
@@ -90,6 +95,16 @@ export default function App() {
     }
   }, []);
 
+  const fetchInvestmentsHistory = useCallback(async () => {
+    try {
+      const res = await fetch("/api/investments/history?days=90");
+      const data = (await res.json()) as InvestmentsHistoryResponse;
+      setInvestmentsHistory(data.snapshots ?? []);
+    } catch (err) {
+      console.error("Failed to fetch investments history", err);
+    }
+  }, []);
+
   const accountsPoller = useSyncPoller({
     field: "accounts_fetched_at",
     onBump: () => {
@@ -110,6 +125,7 @@ export default function App() {
     onBump: () => {
       fetchInvestments(false);
       fetchDrift();
+      fetchInvestmentsHistory();
     },
   });
 
@@ -130,6 +146,7 @@ export default function App() {
     fetchOverviewTxns(true);
     fetchInvestments(true);
     fetchDrift();
+    fetchInvestmentsHistory();
     accountsPoller.start();
     overviewTxnsPoller.start();
     investmentsPoller.start();
@@ -139,6 +156,7 @@ export default function App() {
     fetchOverviewTxns,
     fetchInvestments,
     fetchDrift,
+    fetchInvestmentsHistory,
     accountsPoller,
     overviewTxnsPoller,
     investmentsPoller,
@@ -150,6 +168,7 @@ export default function App() {
     fetchOverviewTxns(true);
     fetchInvestments(true);
     fetchDrift();
+    fetchInvestmentsHistory();
     accountsPoller.start();
     overviewTxnsPoller.start();
     investmentsPoller.start();
@@ -245,6 +264,7 @@ export default function App() {
           groups={investmentsGroups}
           accountGroups={groups}
           drift={drift}
+          history={investmentsHistory}
           onTargetsChanged={fetchDrift}
           lastSyncedLabel={lastSyncedLabel}
           loading={loading || investmentsPoller.active}

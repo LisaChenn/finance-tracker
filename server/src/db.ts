@@ -113,6 +113,15 @@ function initSchema(): void {
       bucket TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    -- One row per calendar day: total portfolio value across every linked
+    -- item on that date. Written after any successful investments refresh;
+    -- same-day refreshes overwrite (PK is date), so at most one row per day.
+    CREATE TABLE IF NOT EXISTS holdings_snapshots (
+      date TEXT PRIMARY KEY,
+      total_value REAL NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 
   addColumnIfMissing("sync_meta", "investments_fetched_at", "TEXT");

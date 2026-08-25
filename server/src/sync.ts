@@ -4,6 +4,7 @@ import {
   getItem,
   getItemCursor,
   getItems,
+  getTotalHoldingsValue,
   replaceHoldings,
   setAccountsFetchedAt,
   setInvestmentsFetchedAt,
@@ -11,6 +12,7 @@ import {
   setTransactionsFetchedAt,
   setTransactionsLastError,
   upsertAccounts,
+  upsertHoldingsSnapshot,
   upsertSecurities,
 } from "./store";
 
@@ -122,6 +124,10 @@ async function refreshInvestmentsInternal(item_id: string): Promise<void> {
       replaceHoldings(item_id, holdings as any);
       setInvestmentsFetchedAt(item_id, new Date().toISOString());
       setInvestmentsLastError(item_id, null);
+      // Snapshot the portfolio total across ALL items for today. Same-day
+      // refreshes overwrite the row, so at most one snapshot per date.
+      const today = new Date().toISOString().slice(0, 10);
+      upsertHoldingsSnapshot(today, getTotalHoldingsValue());
       console.log(
         `[sync] ${item.institution_name}: ${holdings.length} holding(s), ${securities.length} securit${securities.length === 1 ? "y" : "ies"}`
       );
