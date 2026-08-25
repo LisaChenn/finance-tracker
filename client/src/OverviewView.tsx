@@ -134,10 +134,6 @@ export default function OverviewView({
     return ((last - first) / Math.abs(first)) * 100;
   }, [sparkPoints]);
 
-  const catShares = topCats.map((c) =>
-    spend30 > 0 ? (c.value / spend30) * 100 : 0
-  );
-
   const creditCardsCount = groups.reduce(
     (s, g) => s + g.accounts.filter((a) => bucketOf(a) === "credit").length,
     0
@@ -182,27 +178,11 @@ export default function OverviewView({
                 {spending.length} transactions
               </span>
             </div>
-            <div className="flex gap-[3px] mt-4">
-              {catShares.length === 0 ? (
-                <span className="flex-1 rounded bg-white/[0.09] h-[26px]" />
-              ) : (
-                <>
-                  {catShares.map((share, i) => (
-                    <span
-                      key={i}
-                      className="rounded h-[26px]"
-                      style={{
-                        flex: `0 0 ${share}%`,
-                        background: CATEGORY_COLORS[i],
-                      }}
-                    />
-                  ))}
-                  {catShares.reduce((s, x) => s + x, 0) < 100 && (
-                    <span className="flex-1 rounded h-[26px] bg-white/[0.18]" />
-                  )}
-                </>
-              )}
-            </div>
+            <SpendMixBar
+              topCats={topCats}
+              spendTotal={spend30}
+              colors={CATEGORY_COLORS}
+            />
           </div>
 
           <div className={`${PANEL} flex-1`}>
@@ -358,5 +338,121 @@ function ActivitySection({ txns }: { txns: AnnotatedTransaction[] }) {
       activeTab={tab}
       onTabChange={setTab}
     />
+  );
+}
+
+interface SpendMixSegment {
+  key: string;
+  label: string;
+  value: number;
+  count?: number;
+  share: number;
+  color: string;
+  isRest?: boolean;
+}
+
+function SpendMixBar({
+  topCats,
+  spendTotal,
+  colors,
+}: {
+  topCats: Array<{ key: string; label: string; value: number; count: number }>;
+  spendTotal: number;
+  colors: string[];
+}) {
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+
+  if (spendTotal <= 0 || topCats.length === 0) {
+    return (
+      <div className="flex gap-[3px] mt-4">
+        <span className="flex-1 rounded bg-white/[0.09] h-[26px]" />
+      </div>
+    );
+  }
+
+  const segments: SpendMixSegment[] = topCats.map((c, i) => ({
+    key: c.key,
+    label: c.label,
+    value: c.value,
+    count: c.count,
+    share: (c.value / spendTotal) * 100,
+    color: colors[i],
+  }));
+  const topSum = topCats.reduce((s, c) => s + c.value, 0);
+  const rest = spendTotal - topSum;
+  if (rest > 0.005) {
+    segments.push({
+      key: "__rest",
+      label: "Other",
+      value: rest,
+      share: (rest / spendTotal) * 100,
+      color: "rgba(242,243,245,.18)",
+      isRest: true,
+    });
+  }
+
+  const hovered = hoverIdx !== null ? segments[hoverIdx] : null;
+  let acc = 0;
+  const centers = segments.map((s) => {
+    const c = acc + s.share / 2;
+    acc += s.share;
+    return c;
+  });
+  const tipPct = hoverIdx !== null ? centers[hoverIdx] : 0;
+  const tipTransform =
+    tipPct < 12
+      ? "translateX(0%)"
+      : tipPct > 88
+        ? "translateX(-100%)"
+        : "translateX(-50%)";
+
+  return (
+    <div
+      className="relative mt-4"
+      onPointerLeave={() => setHoverIdx(null)}
+    >
+      <div className="flex gap-[3px]">
+        {segments.map((s, i) => {
+          const isHovered = hoverIdx === i;
+          const dimmed = hoverIdx !== null && !isHovered;
+          return (
+            <span
+              key={s.key}
+              className="rounded h-[26px] cursor-pointer"
+              style={{
+                flex: s.isRest ? "1 1 auto" : `0 0 ${s.share}%`,
+                background: s.color,
+                opacity: dimmed ? 0.5 : 1,
+                transition: "opacity 120ms",
+              }}
+              onPointerEnter={() => setHoverIdx(i)}
+            />
+          );
+        })}
+      </div>
+      {hovered && (
+        <div
+          className="pointer-events-none absolute z-10 rounded-lg bg-black/85 px-2.5 py-1.5 shadow-lg whitespace-nowrap"
+          style={{
+            left: `${tipPct}%`,
+            top: "-8px",
+            transform: `${tipTransform} translateY(-100%)`,
+          }}
+        >
+          <div className="font-medium text-[10px] leading-none uppercase tracking-wider2 text-ink-faint">
+            {hovered.label}
+          </div>
+          <div className="font-semibold text-[12.5px] leading-none tabular text-ink mt-1">
+            {formatCurrency(hovered.value)}
+          </div>
+          <div className="font-medium text-[10px] leading-none text-ink-fainter mt-1">
+            {hovered.share.toFixed(1)}%
+            {hovered.count !== undefined
+              ? ` · ${hovered.count} txn${hovered.count === 1 ? "" : "s"}`
+              : ""}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

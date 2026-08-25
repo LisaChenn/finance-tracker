@@ -16,6 +16,7 @@ import {
   monthlySpendBuckets,
   titleCase,
   topMerchants,
+  type MonthBucket,
 } from "./lib/transactions";
 import { useSyncPoller } from "./lib/useSyncPoller";
 import TabHeader, { type ViewName } from "./TabHeader";
@@ -291,33 +292,7 @@ export default function SpendingView({
               </span>
             )}
           </div>
-          <div className="flex items-end gap-2.5 h-[120px] mt-5">
-            {monthly.map((m) => {
-              const h = Math.max(6, (m.total / maxMonth) * 108);
-              const barColor = m.isCurrent
-                ? "bg-accent/35"
-                : m.isPartial
-                  ? "bg-accent"
-                  : "bg-white/[0.09]";
-              const labelActive = m.isCurrent || m.total > 0;
-              return (
-                <div key={m.key} className="flex-1 flex flex-col items-center gap-2 min-w-0">
-                  <div
-                    className={`w-full rounded ${barColor}`}
-                    style={{ height: `${h}px` }}
-                  />
-                  <span
-                    className={
-                      "font-medium text-[10px] leading-none " +
-                      (labelActive ? "text-ink-muted" : "text-ink-ghost")
-                    }
-                  >
-                    {m.label}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
+          <MonthlyBars monthly={monthly} maxMonth={maxMonth} />
         </div>
 
         {/* Income vs spend */}
@@ -552,6 +527,92 @@ export default function SpendingView({
           </div>
         }
       />
+    </div>
+  );
+}
+
+function MonthlyBars({
+  monthly,
+  maxMonth,
+}: {
+  monthly: MonthBucket[];
+  maxMonth: number;
+}) {
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const hovered = hoverIdx !== null ? monthly[hoverIdx] : null;
+  const tipPct =
+    hoverIdx !== null ? ((hoverIdx + 0.5) / monthly.length) * 100 : 0;
+  const tipTransform =
+    tipPct < 12
+      ? "translateX(0%)"
+      : tipPct > 88
+        ? "translateX(-100%)"
+        : "translateX(-50%)";
+
+  return (
+    <div
+      className="relative flex items-end gap-2.5 h-[120px] mt-5"
+      onPointerLeave={() => setHoverIdx(null)}
+    >
+      {monthly.map((m, i) => {
+        const h = Math.max(6, (m.total / maxMonth) * 108);
+        const isHovered = hoverIdx === i;
+        const dimmed = hoverIdx !== null && !isHovered;
+        const barColor = m.isCurrent
+          ? "bg-accent/35"
+          : m.isPartial
+            ? "bg-accent"
+            : "bg-white/[0.09]";
+        const labelActive = m.isCurrent || m.total > 0;
+        return (
+          <div
+            key={m.key}
+            className="flex-1 flex flex-col items-center gap-2 min-w-0 cursor-pointer"
+            onPointerEnter={() => setHoverIdx(i)}
+          >
+            <div
+              className={`w-full rounded ${barColor}`}
+              style={{
+                height: `${h}px`,
+                opacity: dimmed ? 0.5 : 1,
+                transition: "opacity 120ms",
+              }}
+            />
+            <span
+              className={
+                "font-medium text-[10px] leading-none " +
+                (isHovered
+                  ? "text-ink"
+                  : labelActive
+                    ? "text-ink-muted"
+                    : "text-ink-ghost")
+              }
+            >
+              {m.label}
+            </span>
+          </div>
+        );
+      })}
+      {hovered && (
+        <div
+          className="pointer-events-none absolute -top-1 z-10 rounded-lg bg-black/85 px-2.5 py-1.5 shadow-lg whitespace-nowrap"
+          style={{
+            left: `${tipPct}%`,
+            transform: tipTransform,
+          }}
+        >
+          <div className="font-medium text-[10px] leading-none uppercase tracking-wider2 text-ink-faint">
+            {hovered.label}
+            {hovered.isCurrent ? " · so far" : ""}
+          </div>
+          <div className="font-semibold text-[12.5px] leading-none tabular text-ink mt-1">
+            {formatCurrency(hovered.total)}
+          </div>
+          <div className="font-medium text-[10px] leading-none text-ink-fainter mt-1">
+            {hovered.count} txn{hovered.count === 1 ? "" : "s"}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
