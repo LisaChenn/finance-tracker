@@ -105,3 +105,41 @@ export interface AnnotatedHolding extends Holding {
   institution_name: string;
   account_name: string;
 }
+
+export type AssetBucket =
+  | "us_stocks"
+  | "intl_stocks"
+  | "bonds"
+  | "cash"
+  | "other";
+
+export interface DriftBucket {
+  bucket: AssetBucket;
+  target_pct: number | null;
+  current_value: number;
+  current_pct: number;
+  drift_pct: number | null;
+  drift_value: number | null;
+}
+
+export interface UnclassifiedHolding {
+  security_id: string;
+  ticker_symbol: string | null;
+  name: string | null;
+  value: number;
+}
+
+export interface DepositAllocation {
+  bucket: AssetBucket;
+  buy: number;
+}
+
+export interface DriftResponse {
+  total_value: number;
+  buckets: DriftBucket[];
+  unclassified: UnclassifiedHolding[];
+  suggest_deposit?: {
+    amount: number;
+    allocations: DepositAllocation[];
+  };
+}

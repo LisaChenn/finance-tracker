@@ -517,3 +517,119 @@ export function getHoldingsForItem(item_id: string): StoredHoldingRow[] {
     },
   }));
 }
+
+// --- Target allocations & bucket overrides ---
+
+export const ASSET_BUCKETS = [
+  "us_stocks",
+  "intl_stocks",
+  "bonds",
+  "cash",
+  "other",
+] as const;
+export type AssetBucket = (typeof ASSET_BUCKETS)[number];
+
+export interface TargetAllocation {
+  bucket: AssetBucket;
+  target_pct: number;
+  updated_at: string;
+}
+
+export interface BucketOverride {
+  ticker_symbol: string;
+  bucket: AssetBucket;
+  updated_at: string;
+}
+
+function isKnownBucket(b: string): b is AssetBucket {
+  return (ASSET_BUCKETS as readonly string[]).includes(b);
+}
+
+const selectAllTargetsStmt = db.prepare(
+  `SELECT bucket, target_pct, updated_at FROM target_allocations ORDER BY bucket`
+);
+const clearTargetsStmt = db.prepare(`DELETE FROM target_allocations`);
+const insertTargetStmt = db.prepare(
+  `INSERT INTO target_allocations (bucket, target_pct, updated_at) VALUES (?, ?, ?)`
+);
+
+export function getTargetAllocations(): TargetAllocation[] {
+  return selectAllTargetsStmt.all() as TargetAllocation[];
+}
+
+// Replace-in-place. Empty array clears targets (valid — means "no target set").
+// A non-empty set must cover distinct known buckets and sum to 100 (±0.01 for
+// float slack); otherwise throws so the HTTP layer can 400 with the message.
+export function setTargetAllocations(
+  targets: { bucket: string; target_pct: number }[]
+): void {
+  const seen = new Set<string>();
+  for (const t of targets) {
+    if (!isKnownBucket(t.bucket)) {
+      throw new Error(`Unknown bucket: ${t.bucket}`);
+    }
+    if (seen.has(t.bucket)) {
+      throw new Error(`Duplicate bucket: ${t.bucket}`);
+    }
+    seen.add(t.bucket);
+    if (
+      typeof t.target_pct !== "number" ||
+      !Number.isFinite(t.target_pct) ||
+      t.target_pct < 0 ||
+      t.target_pct > 100
+    ) {
+      throw new Error(
+        `Invalid target_pct for ${t.bucket}: ${t.target_pct}`
+      );
+    }
+  }
+  if (targets.length > 0) {
+    const sum = targets.reduce((s, t) => s + t.target_pct, 0);
+    if (Math.abs(sum - 100) > 0.01) {
+      throw new Error(`Targets must sum to 100 (got ${sum.toFixed(2)})`);
+    }
+  }
+  const now = new Date().toISOString();
+  const tx = db.transaction(() => {
+    clearTargetsStmt.run();
+    for (const t of targets) {
+      insertTargetStmt.run(t.bucket, t.target_pct, now);
+    }
+  });
+  tx();
+}
+
+const selectAllOverridesStmt = db.prepare(
+  `SELECT ticker_symbol, bucket, updated_at
+     FROM security_bucket_overrides
+     ORDER BY ticker_symbol`
+);
+const upsertOverrideStmt = db.prepare(
+  `INSERT INTO security_bucket_overrides (ticker_symbol, bucket, updated_at)
+   VALUES (?, ?, ?)
+   ON CONFLICT(ticker_symbol) DO UPDATE SET
+     bucket = excluded.bucket,
+     updated_at = excluded.updated_at`
+);
+const deleteOverrideStmt = db.prepare(
+  `DELETE FROM security_bucket_overrides WHERE ticker_symbol = ?`
+);
+
+export function getBucketOverrides(): BucketOverride[] {
+  return selectAllOverridesStmt.all() as BucketOverride[];
+}
+
+// Tickers are normalized to uppercase so lookups match Plaid's ticker casing
+// and repeated writes for "voo"/"VOO" collapse to one row.
+export function setBucketOverride(ticker: string, bucket: string): void {
+  const t = ticker.trim().toUpperCase();
+  if (!t) throw new Error("ticker_symbol is required");
+  if (!isKnownBucket(bucket)) {
+    throw new Error(`Unknown bucket: ${bucket}`);
+  }
+  upsertOverrideStmt.run(t, bucket, new Date().toISOString());
+}
+
+export function deleteBucketOverride(ticker: string): void {
+  deleteOverrideStmt.run(ticker.trim().toUpperCase());
+}

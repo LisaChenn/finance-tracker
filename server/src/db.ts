@@ -99,6 +99,20 @@ function initSchema(): void {
       PRIMARY KEY (account_id, security_id)
     );
     CREATE INDEX IF NOT EXISTS idx_holdings_item ON holdings(item_id);
+
+    CREATE TABLE IF NOT EXISTS target_allocations (
+      bucket TEXT PRIMARY KEY,
+      target_pct REAL NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    -- Keyed by ticker (not security_id) so overrides survive re-linking and
+    -- apply across institutions holding the same ticker.
+    CREATE TABLE IF NOT EXISTS security_bucket_overrides (
+      ticker_symbol TEXT PRIMARY KEY,
+      bucket TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 
   addColumnIfMissing("sync_meta", "investments_fetched_at", "TEXT");

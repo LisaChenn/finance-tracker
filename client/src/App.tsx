@@ -7,6 +7,7 @@ import { useSyncPoller } from "./lib/useSyncPoller";
 import type {
   AccountGroup,
   AnnotatedTransaction,
+  DriftResponse,
   HoldingsGroup,
   InvestmentsResponse,
   LinkedItem,
@@ -31,6 +32,7 @@ export default function App() {
   const [investmentsGroups, setInvestmentsGroups] = useState<HoldingsGroup[]>(
     []
   );
+  const [drift, setDrift] = useState<DriftResponse | null>(null);
 
   const { start, end } = useMemo(() => computeDateRange("30d", new Date()), []);
   const rangeKey = `${start}|${end}`;
@@ -78,6 +80,16 @@ export default function App() {
     }
   }, []);
 
+  const fetchDrift = useCallback(async () => {
+    try {
+      const res = await fetch("/api/allocation/drift");
+      const data = (await res.json()) as DriftResponse;
+      setDrift(data);
+    } catch (err) {
+      console.error("Failed to fetch drift", err);
+    }
+  }, []);
+
   const accountsPoller = useSyncPoller({
     field: "accounts_fetched_at",
     onBump: () => {
@@ -97,6 +109,7 @@ export default function App() {
     field: "investments_fetched_at",
     onBump: () => {
       fetchInvestments(false);
+      fetchDrift();
     },
   });
 
@@ -116,6 +129,7 @@ export default function App() {
     fetchItems();
     fetchOverviewTxns(true);
     fetchInvestments(true);
+    fetchDrift();
     accountsPoller.start();
     overviewTxnsPoller.start();
     investmentsPoller.start();
@@ -124,6 +138,7 @@ export default function App() {
     fetchItems,
     fetchOverviewTxns,
     fetchInvestments,
+    fetchDrift,
     accountsPoller,
     overviewTxnsPoller,
     investmentsPoller,
@@ -134,6 +149,7 @@ export default function App() {
     fetchItems();
     fetchOverviewTxns(true);
     fetchInvestments(true);
+    fetchDrift();
     accountsPoller.start();
     overviewTxnsPoller.start();
     investmentsPoller.start();
@@ -228,6 +244,8 @@ export default function App() {
         <InvestmentsView
           groups={investmentsGroups}
           accountGroups={groups}
+          drift={drift}
+          onTargetsChanged={fetchDrift}
           lastSyncedLabel={lastSyncedLabel}
           loading={loading || investmentsPoller.active}
           onRefresh={refreshAll}

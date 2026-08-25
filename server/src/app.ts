@@ -3,15 +3,22 @@ import cors from "cors";
 import { Products, CountryCode } from "plaid";
 import { plaidClient, plaidErrorSummary } from "./plaid";
 import {
+  deleteBucketOverride,
   getAccountsForItem,
   getAllSyncMeta,
+  getBucketOverrides,
   getHoldingsForItem,
   getItems,
   getSyncMeta,
+  getTargetAllocations,
   getTransactionsInRange,
+  setBucketOverride,
+  setTargetAllocations,
   upsertItem,
+  StoredHoldingRow,
   StoredItem,
 } from "./store";
+import { computeDrift } from "./allocation";
 import {
   scheduleRefreshAccounts,
   scheduleRefreshInvestments,
@@ -216,6 +223,88 @@ app.get("/api/investments", (req: Request, res: Response) => {
   });
 
   res.json({ groups, cached: true });
+});
+
+app.get("/api/allocation/targets", (_req: Request, res: Response) => {
+  res.json({ targets: getTargetAllocations() });
+});
+
+app.put("/api/allocation/targets", (req: Request, res: Response) => {
+  const body = req.body as { targets?: unknown };
+  if (!Array.isArray(body.targets)) {
+    return res.status(400).json({ error: "targets must be an array" });
+  }
+  try {
+    setTargetAllocations(body.targets as { bucket: string; target_pct: number }[]);
+    res.json({ success: true, targets: getTargetAllocations() });
+  } catch (err: any) {
+    // setTargetAllocations throws on unknown/duplicate bucket, invalid pct,
+    // or a sum that doesn't equal 100 — all of which are 400s.
+    res.status(400).json({ error: err?.message ?? "Invalid targets" });
+  }
+});
+
+app.get("/api/allocation/overrides", (_req: Request, res: Response) => {
+  res.json({ overrides: getBucketOverrides() });
+});
+
+app.put("/api/allocation/override", (req: Request, res: Response) => {
+  const { ticker, bucket } = req.body as {
+    ticker?: unknown;
+    bucket?: unknown;
+  };
+  if (typeof ticker !== "string" || typeof bucket !== "string") {
+    return res
+      .status(400)
+      .json({ error: "ticker and bucket must be strings" });
+  }
+  try {
+    setBucketOverride(ticker, bucket);
+    res.json({ success: true });
+  } catch (err: any) {
+    // setBucketOverride throws on empty ticker or unknown bucket.
+    res.status(400).json({ error: err?.message ?? "Invalid override" });
+  }
+});
+
+app.delete(
+  "/api/allocation/override/:ticker",
+  (req: Request, res: Response) => {
+    const ticker = req.params.ticker;
+    if (!ticker || !ticker.trim()) {
+      return res.status(400).json({ error: "ticker is required" });
+    }
+    // No-op if the override doesn't exist — DELETE is idempotent.
+    deleteBucketOverride(ticker);
+    res.json({ success: true });
+  }
+);
+
+app.get("/api/allocation/drift", (req: Request, res: Response) => {
+  const items = getItems();
+  const holdings: StoredHoldingRow[] = [];
+  for (const it of items) {
+    holdings.push(...getHoldingsForItem(it.item_id));
+  }
+
+  let deposit: number | undefined;
+  if (req.query.deposit !== undefined) {
+    const parsed = Number(req.query.deposit);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return res
+        .status(400)
+        .json({ error: "deposit must be a non-negative number" });
+    }
+    deposit = parsed;
+  }
+
+  const result = computeDrift(
+    holdings,
+    getTargetAllocations(),
+    getBucketOverrides(),
+    deposit
+  );
+  res.json(result);
 });
 
 app.get("/api/items", (req: Request, res: Response) => {
